@@ -10,11 +10,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'printer_connection_state.dart';
 import '../image_print/esc_pos_raster_encoder.dart';
 import 'printer_errors.dart';
+import 'printer_observability.dart';
 import 'printer_print_config.dart';
+import 'printer_retry_policy.dart';
 
 class PrinterCore extends ChangeNotifier {
   PrinterCore({
     this.autoReconnectEnabled = true,
+    this.logCallback,
+    this.connectRetryPolicy = const PrinterRetryPolicy(),
   });
 
   static const String _savedPrinterIdKey = 'pos_printer_kit.last_printer_id';
@@ -35,11 +39,25 @@ class PrinterCore extends ChangeNotifier {
   Duration scanTimeout = const Duration(seconds: 8);
   PrinterOperationException? lastError;
   final bool autoReconnectEnabled;
+  final PrinterLogCallback? logCallback;
+  final PrinterRetryPolicy connectRetryPolicy;
   String? lastConnectedPrinterId;
   PrinterConnectionState connectionState = const PrinterConnectionState(
     stage: PrinterConnectionStage.idle,
     message: 'Ready',
   );
+
+  final StreamController<PrinterConnectionState> _stateController =
+      StreamController<PrinterConnectionState>.broadcast();
+  final StreamController<PrinterPrintProgress> _printProgressController =
+      StreamController<PrinterPrintProgress>.broadcast();
+  final StreamController<PrinterOperationException> _errorController =
+      StreamController<PrinterOperationException>.broadcast();
+
+  Stream<PrinterConnectionState> get onStateChanged => _stateController.stream;
+  Stream<PrinterPrintProgress> get onPrintProgress =>
+      _printProgressController.stream;
+  Stream<PrinterOperationException> get onError => _errorController.stream;
 
   Future<void> initialize() async {
     await _loadSavedPrinterId();
@@ -107,6 +125,7 @@ class PrinterCore extends ChangeNotifier {
         connectionState,
         PrinterConnectionEvent.startSearching,
       );
+      _emitStateChange();
       _setStatus('Scanning for BLE printers...');
     } catch (e) {
       _setError(_mapScanError(e));
@@ -125,6 +144,7 @@ class PrinterCore extends ChangeNotifier {
         connectionState,
         PrinterConnectionEvent.stopSearching,
       );
+      _emitStateChange();
       _setStatus('Scan stopped.');
     } catch (e) {
       _setStatus('Stop scan failed: $e');
@@ -148,11 +168,11 @@ class PrinterCore extends ChangeNotifier {
         deviceId: device.remoteId.str,
         deviceName: displayName(device),
       );
+      _emitStateChange();
       _setStatus('Connecting to ${displayName(device)}...');
       await _connectWithRetry(
         device,
         timeout: const Duration(seconds: 20),
-        retries: 2,
       );
 
       _connectionSub = device.connectionState.listen((state) {
@@ -164,6 +184,7 @@ class PrinterCore extends ChangeNotifier {
             PrinterConnectionEvent.disconnected,
             message: 'Disconnected',
           );
+          _emitStateChange();
           _setStatus('Device disconnected.');
         }
       });
@@ -184,6 +205,7 @@ class PrinterCore extends ChangeNotifier {
           deviceName: displayName(device),
           message: 'Connected',
         );
+        _emitStateChange();
         await _saveLastPrinterId(device.remoteId.str);
         _setStatus('Connected. Ready to print.');
       }
@@ -206,6 +228,7 @@ class PrinterCore extends ChangeNotifier {
         PrinterConnectionEvent.disconnected,
         message: 'Disconnected',
       );
+      _emitStateChange();
       _setStatus('Disconnected.');
     } catch (e) {
       _setStatus('Disconnect failed: $e');
@@ -230,11 +253,11 @@ class PrinterCore extends ChangeNotifier {
         PrinterConnectionEvent.startConnecting,
         deviceId: savedId,
       );
+      _emitStateChange();
       _setStatus('Reconnecting saved printer...');
       await _connectWithRetry(
         device,
         timeout: const Duration(seconds: 12),
-        retries: 2,
         autoConnect: true,
       );
       await device.connectionState
@@ -251,6 +274,7 @@ class PrinterCore extends ChangeNotifier {
             PrinterConnectionEvent.disconnected,
             message: 'Disconnected',
           );
+          _emitStateChange();
           _setStatus('Device disconnected.');
         }
       });
@@ -272,6 +296,7 @@ class PrinterCore extends ChangeNotifier {
         deviceName: displayName(device),
         message: 'Connected',
       );
+      _emitStateChange();
       await _saveLastPrinterId(device.remoteId.str);
       _setStatus('Reconnected to saved printer.');
       return true;
@@ -281,6 +306,7 @@ class PrinterCore extends ChangeNotifier {
         PrinterConnectionEvent.failed,
         message: 'Reconnect failed',
       );
+      _emitStateChange();
       _setStatus('Saved printer not available. Connect manually.');
       return false;
     } finally {
@@ -328,6 +354,11 @@ class PrinterCore extends ChangeNotifier {
     if (busy) return false;
     busy = true;
     notifyListeners();
+    _emitPrintProgress(
+      const PrinterPrintProgress(
+        stage: PrinterPrintProgressStage.started,
+      ),
+    );
 
     try {
       clearError(notify: false);
@@ -340,8 +371,22 @@ class PrinterCore extends ChangeNotifier {
       final copyCount = config.copies < 1 ? 1 : config.copies;
       for (var i = 0; i < copyCount; i++) {
         await _writeInChunks(characteristic, jobBytes, device.mtuNow);
+        _emitPrintProgress(
+          PrinterPrintProgress(
+            stage: PrinterPrintProgressStage.copySent,
+            currentCopy: i + 1,
+            totalCopies: copyCount,
+          ),
+        );
       }
       _setStatus('Image print sent (${jobBytes.length} bytes x $copyCount).');
+      _emitPrintProgress(
+        PrinterPrintProgress(
+          stage: PrinterPrintProgressStage.completed,
+          currentCopy: copyCount,
+          totalCopies: copyCount,
+        ),
+      );
       return true;
     } catch (e) {
       _setError(
@@ -349,6 +394,12 @@ class PrinterCore extends ChangeNotifier {
           code: 'print_failed',
           message: 'Image print failed.',
           cause: e,
+        ),
+      );
+      _emitPrintProgress(
+        PrinterPrintProgress(
+          stage: PrinterPrintProgressStage.failed,
+          message: e.toString(),
         ),
       );
       return false;
@@ -369,15 +420,17 @@ class PrinterCore extends ChangeNotifier {
       bytes.addAll([0x1B, 0x64, feed]); // print and feed n lines
     }
 
-    switch (config.cutMode) {
-      case PrinterCutMode.none:
-        break;
-      case PrinterCutMode.full:
-        bytes.addAll([0x1D, 0x56, 0x00]); // full cut
-        break;
-      case PrinterCutMode.partial:
-        bytes.addAll([0x1D, 0x56, 0x01]); // partial cut
-        break;
+    if (config.allowCutCommands) {
+      switch (config.cutMode) {
+        case PrinterCutMode.none:
+          break;
+        case PrinterCutMode.full:
+          bytes.addAll([0x1D, 0x56, 0x00]); // full cut
+          break;
+        case PrinterCutMode.partial:
+          bytes.addAll([0x1D, 0x56, 0x01]); // partial cut
+          break;
+      }
     }
     return bytes;
   }
@@ -435,13 +488,13 @@ class PrinterCore extends ChangeNotifier {
   void _setStatus(String message) {
     status = message;
     lastError = null;
+    _log('[status] $message');
     notifyListeners();
   }
 
   Future<void> _connectWithRetry(
     BluetoothDevice device, {
     required Duration timeout,
-    int retries = 2,
     bool autoConnect = false,
   }) async {
     var attempt = 0;
@@ -458,9 +511,10 @@ class PrinterCore extends ChangeNotifier {
       } catch (e) {
         final message = e.toString().toLowerCase();
         final isGatt133 = message.contains('133') || message.contains('gatt_error');
-        final shouldRetry = attempt <= retries && isGatt133;
+        final shouldRetryByError = connectRetryPolicy.retryGatt133Only ? isGatt133 : true;
+        final shouldRetry = attempt <= connectRetryPolicy.maxRetries && shouldRetryByError;
         if (!shouldRetry) rethrow;
-        await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+        await Future<void>.delayed(connectRetryPolicy.delayForAttempt(attempt));
       }
     }
   }
@@ -475,6 +529,9 @@ class PrinterCore extends ChangeNotifier {
       deviceId: connectedDevice?.remoteId.str,
       deviceName: connectedDevice == null ? null : displayName(connectedDevice!),
     );
+    _emitStateChange();
+    _errorController.add(error);
+    _log('[error] ${error.code}: ${error.message}');
     notifyListeners();
   }
 
@@ -527,6 +584,29 @@ class PrinterCore extends ChangeNotifier {
     _isScanningSub?.cancel();
     _adapterSub?.cancel();
     _connectionSub?.cancel();
+    _stateController.close();
+    _printProgressController.close();
+    _errorController.close();
     super.dispose();
+  }
+
+  void _emitStateChange() {
+    _stateController.add(connectionState);
+    _log(
+      '[state] ${connectionState.stage.name} '
+      'device=${connectionState.deviceName ?? connectionState.deviceId ?? '-'}',
+    );
+  }
+
+  void _emitPrintProgress(PrinterPrintProgress progress) {
+    _printProgressController.add(progress);
+    _log(
+      '[print] ${progress.stage.name} '
+      'copy=${progress.currentCopy ?? '-'} / ${progress.totalCopies ?? '-'}',
+    );
+  }
+
+  void _log(String message) {
+    logCallback?.call(message);
   }
 }

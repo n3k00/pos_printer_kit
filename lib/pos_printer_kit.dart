@@ -1,7 +1,10 @@
 export 'src/core/printer_device.dart';
 export 'src/core/printer_connection_state.dart';
 export 'src/core/printer_errors.dart';
+export 'src/core/printer_capability_profile.dart';
+export 'src/core/printer_observability.dart';
 export 'src/core/printer_print_config.dart';
+export 'src/core/printer_retry_policy.dart';
 export 'src/core/printer_core.dart';
 export 'src/ui/connect_page.dart';
 export 'src/image_print/image_print_job.dart';
