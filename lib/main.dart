@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:pos_printer_kit/pos_printer_kit.dart';
-
 
 void main() {
   runApp(const PrinterApp());
@@ -15,6 +15,7 @@ class PrinterApp extends StatefulWidget {
 
 class _PrinterAppState extends State<PrinterApp> {
   late final PrinterCore _controller;
+  Locale _locale = const Locale('en');
 
   @override
   void initState() {
@@ -32,19 +33,42 @@ class _PrinterAppState extends State<PrinterApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'POS Printer',
+      locale: _locale,
+      supportedLocales: const [
+        Locale('en'),
+        Locale('my'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: HomePrintPage(controller: _controller),
+      home: HomePrintPage(
+        controller: _controller,
+        locale: _locale,
+        onLocaleChanged: (Locale locale) {
+          setState(() => _locale = locale);
+        },
+      ),
     );
   }
 }
 
 class HomePrintPage extends StatelessWidget {
-  const HomePrintPage({super.key, required this.controller});
+  const HomePrintPage({
+    super.key,
+    required this.controller,
+    required this.locale,
+    required this.onLocaleChanged,
+  });
 
   final PrinterCore controller;
+  final Locale locale;
+  final ValueChanged<Locale> onLocaleChanged;
 
   Future<void> _goToConnectPage(BuildContext context) async {
     await Navigator.of(context).push(
@@ -68,6 +92,35 @@ class HomePrintPage extends StatelessWidget {
           appBar: AppBar(
             title: const Text('POS Print'),
             actions: [
+              PopupMenuButton<Locale>(
+                tooltip: 'Language',
+                icon: const Icon(Icons.language),
+                onSelected: onLocaleChanged,
+                itemBuilder: (context) => [
+                  PopupMenuItem<Locale>(
+                    value: const Locale('en'),
+                    child: Row(
+                      children: [
+                        const Text('English'),
+                        const Spacer(),
+                        if (locale.languageCode == 'en')
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem<Locale>(
+                    value: const Locale('my'),
+                    child: Row(
+                      children: [
+                        const Text('Myanmar'),
+                        const Spacer(),
+                        if (locale.languageCode == 'my')
+                          const Icon(Icons.check, size: 18),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
               IconButton(
                 tooltip: 'Connect printer',
                 onPressed: () => _goToConnectPage(context),
@@ -118,7 +171,7 @@ class HomePrintPage extends StatelessWidget {
                               await _goToConnectPage(context);
                               return;
                             }
-                            await controller.testPrint();
+                            await controller.printDemoImage();
                           },
                     child: Text(
                       controller.hasConnectedPrinter

@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../core/printer_core.dart';
+import '../l10n/printer_ui_strings.dart';
 
 class PrinterConnectPage extends StatefulWidget {
-  const PrinterConnectPage({super.key, required this.core});
+  const PrinterConnectPage({
+    super.key,
+    required this.core,
+    this.strings,
+    this.textOverrides,
+  });
 
   final PrinterCore core;
+  final PrinterUiStrings? strings;
+  final PrinterUiTextOverrides? textOverrides;
 
   @override
   State<PrinterConnectPage> createState() => _PrinterConnectPageState();
@@ -66,23 +74,31 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
         final blue = const Color(0xFF1D9BF0);
         final ringColor = isConnected ? const Color(0xFF19A55A) : blue;
         final animateRing = !isConnected && (isScanning || isConnecting);
+        final localeCode = Localizations.localeOf(context).languageCode;
+        final baseStrings =
+            widget.strings ?? PrinterUiStrings.forLanguageCode(localeCode);
+        final s = widget.textOverrides == null
+            ? baseStrings
+            : widget.textOverrides!.applyTo(baseStrings);
 
         final title = isConnected
-            ? 'CONNECTED'
+            ? s.connectedTitle
             : (isConnecting
-                ? 'CONNECTING'
+                ? s.connectingTitle
                 : (isScanning
-                    ? 'SEARCHING PRINTERS'
-                    : (showResultsMode ? 'SELECT PRINTER' : 'READY TO SEARCH')));
-        final subtitle = isConnected
-            ? 'Printer is ready to print.'
-            : (isConnecting
-                ? 'Connecting to printer. Please wait.'
-                : (isScanning
-                    ? 'Searching nearby BLE printers...'
+                    ? s.searchingPrintersTitle
                     : (showResultsMode
-                        ? 'Tap a printer to connect.'
-                        : 'Tap Start Searching to find printers.')));
+                        ? s.selectPrinterTitle
+                        : s.readyToSearchTitle)));
+        final subtitle = isConnected
+            ? s.connectedSubtitle
+            : (isConnecting
+                ? s.connectingSubtitle
+                : (isScanning
+                    ? s.searchingSubtitle
+                    : (showResultsMode
+                        ? s.selectPrinterSubtitle
+                        : s.readyToSearchSubtitle)));
 
         return Scaffold(
           backgroundColor: bg,
@@ -186,7 +202,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            'Printers found:',
+                            s.printersFoundLabel,
                             style: TextStyle(
                               color: textPrimary,
                               fontSize: 21,
@@ -198,7 +214,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                             child: c.results.isEmpty
                                 ? Center(
                                     child: Text(
-                                      'No BLE printer found',
+                                      s.noBlePrinterFoundLabel,
                                       style: TextStyle(
                                         color: textSecondary,
                                         fontSize: 17,
@@ -228,7 +244,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                                           ),
                                         ),
                                         subtitle: Text(
-                                          '${d.remoteId.str} | RSSI ${r.rssi}',
+                                          d.remoteId.str,
                                           style: TextStyle(color: textSecondary),
                                         ),
                                         trailing: Icon(
@@ -245,6 +261,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                     ),
                   const SizedBox(height: 14),
                   _BottomActions(
+                    strings: s,
                     isConnecting: isConnecting,
                     isConnected: isConnected,
                     isScanning: isScanning,
@@ -355,6 +372,7 @@ class _BluetoothPulse extends StatelessWidget {
 
 class _BottomActions extends StatelessWidget {
   const _BottomActions({
+    required this.strings,
     required this.isConnecting,
     required this.isConnected,
     required this.isScanning,
@@ -366,6 +384,7 @@ class _BottomActions extends StatelessWidget {
     required this.onDone,
   });
 
+  final PrinterUiStrings strings;
   final bool isConnecting;
   final bool isConnected;
   final bool isScanning;
@@ -384,16 +403,16 @@ class _BottomActions extends StatelessWidget {
     String primaryText;
     VoidCallback? primaryAction;
     if (isConnecting || busy) {
-      primaryText = 'Connecting...';
+      primaryText = strings.connectingButton;
       primaryAction = null;
     } else if (isConnected) {
-      primaryText = 'Done';
+      primaryText = strings.doneButton;
       primaryAction = onDone;
     } else if (isScanning) {
-      primaryText = 'Stop Searching';
+      primaryText = strings.stopSearchingButton;
       primaryAction = onStop;
     } else {
-      primaryText = 'Start Searching';
+      primaryText = strings.startSearchingButton;
       primaryAction = adapterOn ? onStart : null;
     }
 
@@ -418,9 +437,9 @@ class _BottomActions extends StatelessWidget {
           const SizedBox(height: 8),
           TextButton(
             onPressed: onDisconnect,
-            child: const Text(
-              'Disconnect',
-              style: TextStyle(color: secondary, fontSize: 16),
+            child: Text(
+              strings.disconnectButton,
+              style: const TextStyle(color: secondary, fontSize: 16),
             ),
           ),
         ],
