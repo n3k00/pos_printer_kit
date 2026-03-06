@@ -1,52 +1,55 @@
 # pos_printer_kit
 
-Private Flutter package for POS thermal printing with:
-- BLE printer connection flow UI
-- BLE scan/connect/disconnect core logic
-- Image-only ESC/POS raster printing (Myanmar-safe output path)
+Reusable Flutter package for POS thermal printing.
 
-## Current capabilities
+This package is designed for:
+- app developers who need BLE printer connect + print quickly
+- maintainers who need clear extension points
+- AI/code agents that need reliable project context to patch safely
 
-- `PrinterCore`
-  - scan BLE devices
-  - connect/disconnect printer
-  - expose status fields (`isScanning`, `busy`, `status`, `connectedDevice`)
-  - print image bytes via ESC/POS raster command (`GS v 0`) with `PrinterPrintConfig`
-- `PrinterConnectPage`
-  - ready-to-search / searching / results / connected states
-  - list nearby BLE devices and connect from UI
-- `testPrint()` (deprecated helper)
-  - sends a generated demo image to verify printer output quickly
+## What This Package Does
 
-## Requirements
+- BLE printer discovery/connect/disconnect
+- reusable connect page UI (`PrinterConnectPage`)
+- image-only ESC/POS raster printing (recommended for Myanmar-safe output)
+- print configuration controls (`PrinterPrintConfig`)
+- typed error model for core operations
+- optional last-printer persistence + auto reconnect
 
-- Flutter `3.11+`
-- Android BLE printer (BLE only)
-- App must include required Android Bluetooth permissions in `AndroidManifest.xml`
+## What This Package Does Not Do
 
-Important:
-- This package currently targets BLE printers. Bluetooth Classic printers are not supported by this flow.
-- Text-mode ESC/POS printing is intentionally avoided; printing is image-only.
+- Bluetooth Classic (SPP) printing (BLE only in current implementation)
+- guaranteed vendor-specific command compatibility across all printer models
+- raw text-mode Unicode printing reliability (use image pipeline)
+
+## Package Layout
+
+- `lib/src/core/`
+  - connection logic, print orchestration, errors, state machine
+- `lib/src/ui/`
+  - connect page widgets and flows
+- `lib/src/image_print/`
+  - raster encoder and image-print helpers
+- `lib/src/l10n/`
+  - connect page UI strings and overrides
 
 ## Install
-
-`pubspec.yaml`:
 
 ```yaml
 dependencies:
   pos_printer_kit:
     git:
       url: https://github.com/n3k00/pos_printer_kit.git
-      ref: main
+      ref: v0.1.0
 ```
 
-Then:
+Then run:
 
 ```bash
 flutter pub get
 ```
 
-## Quick start
+## Quick Start
 
 ```dart
 import 'package:flutter/material.dart';
@@ -54,7 +57,6 @@ import 'package:pos_printer_kit/pos_printer_kit.dart';
 
 class PrinterHostPage extends StatefulWidget {
   const PrinterHostPage({super.key});
-
   @override
   State<PrinterHostPage> createState() => _PrinterHostPageState();
 }
@@ -78,10 +80,8 @@ class _PrinterHostPageState extends State<PrinterHostPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('POS'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.bluetooth),
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -89,6 +89,7 @@ class _PrinterHostPageState extends State<PrinterHostPage> {
                 ),
               );
             },
+            icon: const Icon(Icons.bluetooth),
           ),
         ],
       ),
@@ -96,9 +97,9 @@ class _PrinterHostPageState extends State<PrinterHostPage> {
         child: FilledButton(
           onPressed: () async {
             if (!core.hasConnectedPrinter) return;
-            await core.testPrint();
+            await core.printDemoImage();
           },
-          child: const Text('Send Test Image Print'),
+          child: const Text('Test Print'),
         ),
       ),
     );
@@ -106,13 +107,13 @@ class _PrinterHostPageState extends State<PrinterHostPage> {
 }
 ```
 
-## Printing API
+## Primary Printing API
 
-### Print image bytes
+Use `printImage` as the primary API.
 
 ```dart
 await core.printImage(
-  imageBytes, // Uint8List (PNG/JPG bytes)
+  imageBytes, // Uint8List (PNG/JPG)
   config: const PrinterPrintConfig(
     width: 384,
     threshold: 160,
@@ -124,41 +125,169 @@ await core.printImage(
 );
 ```
 
-`PrinterPrintConfig` fields:
-- `width`: target render width in pixels
-- `threshold`: black/white threshold
-- `copies`: print copies
-- `ditherMode`: `threshold` or `floydSteinberg`
-- `feedLinesAfterPrint`: line feeds after raster print
-- `cutMode`: `none`, `full`, `partial`
+`PrinterPrintConfig`:
+- `width`
+- `threshold`
+- `copies`
+- `ditherMode` (`threshold`, `floydSteinberg`)
+- `feedLinesAfterPrint`
+- `cutMode` (`none`, `full`, `partial`)
+- `allowCutCommands`
 
-## Recommended workflow for Myanmar output
+## Printer Capability Profiles
 
+Built-in profiles:
+- `PrinterCapabilityProfile.receipt58` (384px, cutter usually not available)
+- `PrinterCapabilityProfile.receipt80` (576px, cutter usually available)
+- `PrinterCapabilityProfile.xpP323b` (portable BLE profile)
+
+Use profile-based config:
+
+```dart
+final cfg = PrinterPrintConfig.fromProfile(
+  PrinterCapabilityProfile.receipt58,
+  ditherMode: PrinterDitherMode.floydSteinberg,
+  copies: 1,
+);
+await core.printImage(imageBytes, config: cfg);
+```
+
+Model quirk lookup:
+
+```dart
+final profile = PrinterCapabilityProfile.findByModelName('XP-P323B');
+if (profile != null) {
+  debugPrint(profile.quirks.toString());
+}
+```
+
+## Label Sticker Printing
+
+Yes, this package can be used for label sticker workflows.
+
+Recommended label config:
+
+```dart
+final labelConfig = PrinterPrintConfig.label(
+  width: 384,
+  threshold: 170,
+  copies: 1,
+  ditherMode: PrinterDitherMode.threshold,
+);
+await core.printImage(labelImageBytes, config: labelConfig);
+```
+
+Why this helps for labels:
+- `feedLinesAfterPrint = 0` by default
+- `cutMode = none` by default
+- `allowCutCommands = false` by default
+- avoids unnecessary paper feed/cut for sticker stock
+
+## Localization
+
+Connect page supports:
+- English (`en`)
+- Myanmar (`my`)
+
+Default behavior:
+- language auto-selects from app locale
+
+Override behavior:
+- pass `strings` or `textOverrides` to `PrinterConnectPage`
+
+## Error Model
+
+Typed errors are exposed via `PrinterCore.lastError`.
+
+Examples:
+- `BluetoothOffException`
+- `NoWritableCharacteristicException`
+- `ConnectTimeoutException`
+
+## Retry / Backoff Policy
+
+Connection retry behavior is configurable via `PrinterRetryPolicy`.
+
+```dart
+final core = PrinterCore(
+  connectRetryPolicy: const PrinterRetryPolicy(
+    maxRetries: 3,
+    baseDelayMs: 500,
+    backoffMultiplier: 2.0,
+    maxDelayMs: 4000,
+    retryGatt133Only: true,
+  ),
+);
+```
+
+Fields:
+- `maxRetries`: number of retries after first failure
+- `baseDelayMs`: delay before retry #1
+- `backoffMultiplier`: exponential factor for next retries
+- `maxDelayMs`: upper bound for retry delay
+- `retryGatt133Only`: retry only common Android GATT 133 failures (recommended)
+
+## Observability Hooks
+
+`PrinterCore` exposes hooks for app telemetry and debugging:
+
+- `onStateChanged` (`Stream<PrinterConnectionState>`)
+- `onPrintProgress` (`Stream<PrinterPrintProgress>`)
+- `onError` (`Stream<PrinterOperationException>`)
+- `logCallback` (constructor callback)
+
+Example:
+
+```dart
+final core = PrinterCore(
+  logCallback: (msg) => debugPrint('[printer] $msg'),
+);
+
+core.onStateChanged.listen((s) {
+  debugPrint('state=${s.stage} device=${s.deviceName}');
+});
+
+core.onPrintProgress.listen((p) {
+  debugPrint('print=${p.stage} ${p.currentCopy}/${p.totalCopies}');
+});
+
+core.onError.listen((e) {
+  debugPrint('error=${e.code} ${e.message}');
+});
+```
+
+## Recommended Receipt Strategy
+
+For Myanmar and mixed-language receipts:
 1. Render receipt/label as image in app layer
-2. Pass image bytes to `printImage(...)`
-3. Avoid direct text-mode printing for Myanmar glyph reliability
+2. Call `printImage(...)`
+3. Avoid text-only ESC/POS for critical glyph correctness
 
-## Known limitations
+## Development Rules (For Humans + AI Agents)
 
-- BLE only (no Classic/SPP path in this package)
-- Current i18n in connect page is hardcoded English (localization layer planned)
-- Dithering quality/output may vary by printer model and paper
+- Keep printing API backward-compatible within `0.x` where possible.
+- Do not remove exported symbols without changelog note.
+- Add/adjust tests for behavior changes.
+- Prefer configurable defaults instead of hardcoded magic values.
+- Keep BLE logic in `core`, UI logic in `ui`, encoding logic in `image_print`.
 
-## License and dependency notice
+## Test Commands
 
-- This repository license applies to `pos_printer_kit` source.
-- Third-party dependency licenses still apply to their own packages.
-- `flutter_blue_plus` has its own license terms; verify suitability for your commercial use before production rollout.
-- See `THIRD_PARTY_NOTICES.md` for dependency-specific compliance notes.
+```bash
+flutter analyze
+flutter test
+```
 
-## Roadmap
+## Release Process
 
-- UI localization (`en` / `my`) with overridable strings
-- Persist and auto-reconnect last printer
-- Better image pipeline options (dithering, width profiles)
-- Typed error model for connection/printing failures
+1. Update `pubspec.yaml` version.
+2. Update `CHANGELOG.md` using `CHANGELOG_RULES.md`.
+3. Run analyze + tests.
+4. Create annotated tag (`vX.Y.Z`).
 
-## Release process
+## Compliance
 
-- Follow `CHANGELOG_RULES.md` for changelog/version policy.
-- Create annotated tags for releases (example: `v0.1.0`).
+- This repo uses MIT license (`LICENSE`).
+- Third-party terms still apply to dependencies.
+- Read `THIRD_PARTY_NOTICES.md` before commercial release.
+- For runtime fault handling expectations, read `FAILURE_MATRIX.md`.
