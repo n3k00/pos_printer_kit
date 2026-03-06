@@ -397,23 +397,30 @@ class _BottomActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primary = Color(0xFF1D9BF0);
-    const secondary = Color(0xFF5E6B80);
+    const brandBlue = Color(0xFF1D9BF0);
+    const successGreen = Color(0xFF16A34A);
+    const warningAmber = Color(0xFFD97706);
+    const dangerRed = Color(0xFFDC2626);
 
     String primaryText;
     VoidCallback? primaryAction;
+    Color primaryBg = brandBlue;
+    Color primaryFg = Colors.white;
     if (isConnecting || busy) {
       primaryText = strings.connectingButton;
       primaryAction = null;
     } else if (isConnected) {
       primaryText = strings.doneButton;
       primaryAction = onDone;
+      primaryBg = successGreen;
     } else if (isScanning) {
       primaryText = strings.stopSearchingButton;
       primaryAction = onStop;
+      primaryBg = warningAmber;
     } else {
       primaryText = strings.startSearchingButton;
       primaryAction = adapterOn ? onStart : null;
+      primaryBg = brandBlue;
     }
 
     return Column(
@@ -423,8 +430,8 @@ class _BottomActions extends StatelessWidget {
           child: FilledButton(
             onPressed: primaryAction,
             style: FilledButton.styleFrom(
-              backgroundColor: primary,
-              foregroundColor: Colors.white,
+              backgroundColor: primaryBg,
+              foregroundColor: primaryFg,
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
             child: Text(
@@ -437,9 +444,13 @@ class _BottomActions extends StatelessWidget {
           const SizedBox(height: 8),
           TextButton(
             onPressed: onDisconnect,
+            style: TextButton.styleFrom(
+              foregroundColor: dangerRed,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            ),
             child: Text(
               strings.disconnectButton,
-              style: const TextStyle(color: secondary, fontSize: 16),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
           ),
         ],

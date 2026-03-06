@@ -12,6 +12,9 @@ class PrinterPrintConfig {
     this.feedLinesAfterPrint = 2,
     this.cutMode = PrinterCutMode.none,
     this.allowCutCommands = true,
+    this.chunkDelayMs = 12,
+    this.maxChunkSize = 180,
+    this.preferWriteWithoutResponse = false,
   });
 
   factory PrinterPrintConfig.fromProfile(
@@ -21,6 +24,9 @@ class PrinterPrintConfig {
     PrinterDitherMode? ditherMode,
     PrinterCutMode? cutMode,
     int? feedLinesAfterPrint,
+    int chunkDelayMs = 12,
+    int maxChunkSize = 180,
+    bool preferWriteWithoutResponse = false,
   }) {
     return PrinterPrintConfig(
       width: profile.paperWidthPx,
@@ -31,6 +37,9 @@ class PrinterPrintConfig {
           feedLinesAfterPrint ?? profile.defaultFeedLinesAfterPrint,
       cutMode: cutMode ?? (profile.supportsCut ? PrinterCutMode.partial : PrinterCutMode.none),
       allowCutCommands: profile.supportsCut,
+      chunkDelayMs: chunkDelayMs,
+      maxChunkSize: maxChunkSize,
+      preferWriteWithoutResponse: preferWriteWithoutResponse,
     );
   }
 
@@ -39,6 +48,9 @@ class PrinterPrintConfig {
     int threshold = 160,
     int copies = 1,
     PrinterDitherMode ditherMode = PrinterDitherMode.threshold,
+    int chunkDelayMs = 12,
+    int maxChunkSize = 180,
+    bool preferWriteWithoutResponse = false,
   }) {
     return PrinterPrintConfig(
       width: width,
@@ -48,6 +60,9 @@ class PrinterPrintConfig {
       feedLinesAfterPrint: 0,
       cutMode: PrinterCutMode.none,
       allowCutCommands: false,
+      chunkDelayMs: chunkDelayMs,
+      maxChunkSize: maxChunkSize,
+      preferWriteWithoutResponse: preferWriteWithoutResponse,
     );
   }
 
@@ -56,6 +71,9 @@ class PrinterPrintConfig {
     int threshold = 160,
     int copies = 1,
     PrinterDitherMode? ditherMode,
+    int chunkDelayMs = 12,
+    int maxChunkSize = 180,
+    bool preferWriteWithoutResponse = false,
   }) {
     return PrinterPrintConfig(
       width: profile.paperWidthPx,
@@ -65,6 +83,9 @@ class PrinterPrintConfig {
       feedLinesAfterPrint: 0,
       cutMode: PrinterCutMode.none,
       allowCutCommands: false,
+      chunkDelayMs: chunkDelayMs,
+      maxChunkSize: maxChunkSize,
+      preferWriteWithoutResponse: preferWriteWithoutResponse,
     );
   }
 
@@ -75,4 +96,7 @@ class PrinterPrintConfig {
   final int feedLinesAfterPrint;
   final PrinterCutMode cutMode;
   final bool allowCutCommands;
+  final int chunkDelayMs;
+  final int maxChunkSize;
+  final bool preferWriteWithoutResponse;
 }

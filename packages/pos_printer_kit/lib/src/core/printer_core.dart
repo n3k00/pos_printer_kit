@@ -22,6 +22,7 @@ class PrinterCore extends ChangeNotifier {
   });
 
   static const String _savedPrinterIdKey = 'pos_printer_kit.last_printer_id';
+  static const String _savedPrinterNameKey = 'pos_printer_kit.last_printer_name';
   static const EscPosRasterEncoder _rasterEncoder = EscPosRasterEncoder();
 
   StreamSubscription<List<ScanResult>>? _scanResultsSub;
@@ -42,6 +43,7 @@ class PrinterCore extends ChangeNotifier {
   final PrinterLogCallback? logCallback;
   final PrinterRetryPolicy connectRetryPolicy;
   String? lastConnectedPrinterId;
+  String? lastConnectedPrinterName;
   PrinterConnectionState connectionState = const PrinterConnectionState(
     stage: PrinterConnectionStage.idle,
     message: 'Ready',
@@ -60,7 +62,7 @@ class PrinterCore extends ChangeNotifier {
   Stream<PrinterOperationException> get onError => _errorController.stream;
 
   Future<void> initialize() async {
-    await _loadSavedPrinterId();
+    await _loadSavedPrinterMeta();
     _listenBluetooth();
     await _initializeBluetooth();
     if (autoReconnectEnabled && lastConnectedPrinterId != null) {
@@ -73,6 +75,20 @@ class PrinterCore extends ChangeNotifier {
       (scanResults) {
         scanResults.sort((a, b) => b.rssi.compareTo(a.rssi));
         results = scanResults;
+        final savedId = lastConnectedPrinterId;
+        if (savedId != null && savedId.isNotEmpty) {
+          for (final r in scanResults) {
+            if (r.device.remoteId.str != savedId) continue;
+            final discoveredName = _bestDeviceName(
+              r.device,
+              fallbackName: r.advertisementData.advName,
+            );
+            if (discoveredName != savedId && discoveredName != lastConnectedPrinterName) {
+              unawaited(_saveLastPrinter(savedId, discoveredName));
+            }
+            break;
+          }
+        }
         notifyListeners();
       },
       onError: (Object e) => _setStatus('Scan error: $e'),
@@ -198,15 +214,16 @@ class PrinterCore extends ChangeNotifier {
       if (writable == null) {
         _setError(const NoWritableCharacteristicException());
       } else {
+        final name = _bestDeviceName(device, fallbackName: result.advertisementData.advName);
         connectionState = PrinterConnectionMachine.transition(
           connectionState,
           PrinterConnectionEvent.connected,
           deviceId: device.remoteId.str,
-          deviceName: displayName(device),
+          deviceName: name,
           message: 'Connected',
         );
         _emitStateChange();
-        await _saveLastPrinterId(device.remoteId.str);
+        await _saveLastPrinter(device.remoteId.str, name);
         _setStatus('Connected. Ready to print.');
       }
     } catch (e) {
@@ -247,7 +264,21 @@ class PrinterCore extends ChangeNotifier {
       await connectedDevice?.disconnect();
       await _connectionSub?.cancel();
 
-      final device = BluetoothDevice.fromId(savedId);
+      // Try to reuse any system-connected device first (Android ignores withServices).
+      BluetoothDevice? device;
+      try {
+        final system = await FlutterBluePlus.systemDevices(const []);
+        for (final d in system) {
+          if (d.remoteId.str == savedId) {
+            device = d;
+            break;
+          }
+        }
+      } catch (_) {
+        // If system query fails, fallback to reconstructing from saved remoteId.
+      }
+      device ??= BluetoothDevice.fromId(savedId);
+
       connectionState = PrinterConnectionMachine.transition(
         connectionState,
         PrinterConnectionEvent.startConnecting,
@@ -255,15 +286,26 @@ class PrinterCore extends ChangeNotifier {
       );
       _emitStateChange();
       _setStatus('Reconnecting saved printer...');
-      await _connectWithRetry(
-        device,
-        timeout: const Duration(seconds: 12),
-        autoConnect: true,
-      );
-      await device.connectionState
-          .where((v) => v == BluetoothConnectionState.connected)
-          .first
-          .timeout(const Duration(seconds: 15));
+
+      // First try a direct connect (faster restore when link is already up).
+      try {
+        await _connectWithRetry(
+          device,
+          timeout: const Duration(seconds: 8),
+          autoConnect: false,
+        );
+      } catch (_) {
+        // Fallback to autoConnect for slower background restoration.
+        await _connectWithRetry(
+          device,
+          timeout: const Duration(seconds: 12),
+          autoConnect: true,
+        );
+        await device.connectionState
+            .where((v) => v == BluetoothConnectionState.connected)
+            .first
+            .timeout(const Duration(seconds: 15));
+      }
 
       _connectionSub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
@@ -289,16 +331,17 @@ class PrinterCore extends ChangeNotifier {
 
       connectedDevice = device;
       writeCharacteristic = writable;
+      final name = _bestDeviceName(device, fallbackName: lastConnectedPrinterName);
       connectionState = PrinterConnectionMachine.transition(
         connectionState,
         PrinterConnectionEvent.connected,
         deviceId: device.remoteId.str,
-        deviceName: displayName(device),
+        deviceName: name,
         message: 'Connected',
       );
       _emitStateChange();
-      await _saveLastPrinterId(device.remoteId.str);
-      _setStatus('Reconnected to saved printer.');
+      await _saveLastPrinter(device.remoteId.str, name);
+      _setStatus('Restored saved printer connection.');
       return true;
     } catch (_) {
       connectionState = PrinterConnectionMachine.transition(
@@ -318,7 +361,9 @@ class PrinterCore extends ChangeNotifier {
   Future<void> forgetSavedPrinter() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_savedPrinterIdKey);
+    await prefs.remove(_savedPrinterNameKey);
     lastConnectedPrinterId = null;
+    lastConnectedPrinterName = null;
     notifyListeners();
   }
 
@@ -370,7 +415,12 @@ class PrinterCore extends ChangeNotifier {
 
       final copyCount = config.copies < 1 ? 1 : config.copies;
       for (var i = 0; i < copyCount; i++) {
-        await _writeInChunks(characteristic, jobBytes, device.mtuNow);
+        await _writeInChunks(
+          characteristic,
+          jobBytes,
+          device.mtuNow,
+          config: config,
+        );
         _emitPrintProgress(
           PrinterPrintProgress(
             stage: PrinterPrintProgressStage.copySent,
@@ -452,11 +502,16 @@ class PrinterCore extends ChangeNotifier {
     BluetoothCharacteristic characteristic,
     List<int> data,
     int mtu,
+    {required PrinterPrintConfig config}
   ) async {
-    final chunkSize = max(20, min(180, mtu - 3));
-    final withoutResponse =
-        characteristic.properties.writeWithoutResponse &&
-            !characteristic.properties.write;
+    final safeMtuPayload = max(20, mtu - 3);
+    final safeMaxChunk = config.maxChunkSize.clamp(20, 512);
+    final chunkSize = min(safeMtuPayload, safeMaxChunk);
+    final delayMs = config.chunkDelayMs.clamp(0, 300);
+    final canWriteWithoutResponse = characteristic.properties.writeWithoutResponse;
+    final withoutResponse = config.preferWriteWithoutResponse
+        ? canWriteWithoutResponse
+        : (canWriteWithoutResponse && !characteristic.properties.write);
 
     for (var i = 0; i < data.length; i += chunkSize) {
       final end = min(i + chunkSize, data.length);
@@ -464,7 +519,9 @@ class PrinterCore extends ChangeNotifier {
         data.sublist(i, end),
         withoutResponse: withoutResponse,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      if (delayMs > 0) {
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+      }
     }
   }
 
@@ -472,11 +529,7 @@ class PrinterCore extends ChangeNotifier {
       connectedDevice != null && writeCharacteristic != null;
 
   String displayName(BluetoothDevice device) {
-    final n1 = device.platformName.trim();
-    if (n1.isNotEmpty) return n1;
-    final n2 = device.advName.trim();
-    if (n2.isNotEmpty) return n2;
-    return device.remoteId.str;
+    return _bestDeviceName(device);
   }
 
   Color bluetoothStatusColor(ThemeData theme) {
@@ -510,6 +563,9 @@ class PrinterCore extends ChangeNotifier {
         return;
       } catch (e) {
         final message = e.toString().toLowerCase();
+        if (message.contains('already connected')) {
+          return;
+        }
         final isGatt133 = message.contains('133') || message.contains('gatt_error');
         final shouldRetryByError = connectRetryPolicy.retryGatt133Only ? isGatt133 : true;
         final shouldRetry = attempt <= connectRetryPolicy.maxRetries && shouldRetryByError;
@@ -540,15 +596,37 @@ class PrinterCore extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
-  Future<void> _saveLastPrinterId(String id) async {
+  Future<void> _saveLastPrinter(String id, String? name) async {
     lastConnectedPrinterId = id;
+    final normalizedName = (name ?? '').trim();
+    if (normalizedName.isNotEmpty) {
+      lastConnectedPrinterName = normalizedName;
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_savedPrinterIdKey, id);
+    if (normalizedName.isNotEmpty) {
+      await prefs.setString(_savedPrinterNameKey, normalizedName);
+    }
   }
 
-  Future<void> _loadSavedPrinterId() async {
+  Future<void> _loadSavedPrinterMeta() async {
     final prefs = await SharedPreferences.getInstance();
     lastConnectedPrinterId = prefs.getString(_savedPrinterIdKey);
+    lastConnectedPrinterName = prefs.getString(_savedPrinterNameKey);
+  }
+
+  String _bestDeviceName(BluetoothDevice device, {String? fallbackName}) {
+    final n1 = device.platformName.trim();
+    if (n1.isNotEmpty) return n1;
+    final n2 = device.advName.trim();
+    if (n2.isNotEmpty) return n2;
+    final n3 = (fallbackName ?? '').trim();
+    if (n3.isNotEmpty) return n3;
+    if (device.remoteId.str == lastConnectedPrinterId) {
+      final savedName = (lastConnectedPrinterName ?? '').trim();
+      if (savedName.isNotEmpty) return savedName;
+    }
+    return device.remoteId.str;
   }
 
   PrinterOperationException _mapScanError(Object e) {
