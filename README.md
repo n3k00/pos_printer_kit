@@ -121,6 +121,9 @@ await core.printImage(
     ditherMode: PrinterDitherMode.floydSteinberg,
     feedLinesAfterPrint: 2,
     cutMode: PrinterCutMode.none,
+    chunkDelayMs: 12,
+    maxChunkSize: 180,
+    preferWriteWithoutResponse: false,
   ),
 );
 ```
@@ -133,6 +136,9 @@ await core.printImage(
 - `feedLinesAfterPrint`
 - `cutMode` (`none`, `full`, `partial`)
 - `allowCutCommands`
+- `chunkDelayMs` (default `12`, lower is faster but may reduce stability)
+- `maxChunkSize` (default `180`, upper bound for each BLE write chunk)
+- `preferWriteWithoutResponse` (can improve speed on some printers)
 
 ## Printer Capability Profiles
 
@@ -262,6 +268,31 @@ For Myanmar and mixed-language receipts:
 1. Render receipt/label as image in app layer
 2. Call `printImage(...)`
 3. Avoid text-only ESC/POS for critical glyph correctness
+
+## Host App Calibration Boundary
+
+This package handles BLE transport, connection lifecycle, and print pipeline.
+Final receipt layout calibration is intentionally host-app responsibility.
+
+Host app should tune:
+- image canvas width per deployed printer (`384`, `560`, `576`, etc.)
+- horizontal offsets for model-specific centering
+- bottom crop to remove trailing blank area
+- font sizes and x/y layout for business design
+
+Reason:
+- printable area differs by hardware/firmware even inside "80mm" class
+- package cannot safely assume fixed margin offsets for every vendor
+
+## Current Gaps / Roadmap
+
+These are practical improvements recommended for production apps:
+
+- `PrinterSpeedProfile` presets (`fast`, `balanced`, `quality`) on top of low-level chunk settings
+- byte-level print progress percentage (`sent/total`) for clearer UX feedback
+- optional `printRasterBytes(...)` API to bypass repeated image encoding
+- profile-level width calibration table per known model (e.g., safe 80mm width by model)
+- richer examples for 80mm receipt and 80mm label sticker flows
 
 ## Development Rules (For Humans + AI Agents)
 
