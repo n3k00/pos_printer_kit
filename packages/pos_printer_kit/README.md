@@ -15,12 +15,13 @@ This package is designed for:
 - print configuration controls (`PrinterPrintConfig`)
 - typed error model for core operations
 - optional last-printer persistence + auto reconnect
+- print transport prefers `print_bluetooth_thermal` + `esc_pos_utils_plus` for faster send path
 
 ## What This Package Does Not Do
 
-- Bluetooth Classic (SPP) printing (BLE only in current implementation)
 - guaranteed vendor-specific command compatibility across all printer models
 - raw text-mode Unicode printing reliability (use image pipeline)
+- universal dual-transport discovery UX (current connect UI remains BLE-first)
 
 ## Package Layout
 
@@ -140,6 +141,10 @@ await core.printImage(
 - `maxChunkSize` (default `180`, upper bound for each BLE write chunk)
 - `preferWriteWithoutResponse` (can improve speed on some printers)
 
+Transport behavior:
+- package first attempts `print_bluetooth_thermal` connection/write path
+- if that path is not available, package falls back to BLE chunk writing
+
 ## Printer Capability Profiles
 
 Built-in profiles:
@@ -221,7 +226,7 @@ final core = PrinterCore(
     baseDelayMs: 500,
     backoffMultiplier: 2.0,
     maxDelayMs: 4000,
-    retryGatt133Only: true,
+    retryGatt133Only: false,
   ),
 );
 ```
@@ -231,7 +236,7 @@ Fields:
 - `baseDelayMs`: delay before retry #1
 - `backoffMultiplier`: exponential factor for next retries
 - `maxDelayMs`: upper bound for retry delay
-- `retryGatt133Only`: retry only common Android GATT 133 failures (recommended)
+- `retryGatt133Only`: legacy compatibility flag (safe to keep `false` on current transport)
 
 ## Observability Hooks
 

@@ -1,10 +1,10 @@
 # Failure Matrix and Recovery Behavior
 
-This document defines expected failure handling for common BLE printer issues.
+This document defines expected failure handling for common Bluetooth printer issues.
 
 ## Scope
 
-- Platform: Android BLE printers
+- Platform: Android Bluetooth printers
 - Package: `pos_printer_kit`
 - Core actor: `PrinterCore`
 
@@ -12,13 +12,13 @@ This document defines expected failure handling for common BLE printer issues.
 
 | Failure case | Typical signal | Package behavior | Recommended app recovery UX |
 |---|---|---|---|
-| Bluetooth is off | `BluetoothAdapterState != on`, scan/connect fail | Emits `BluetoothOffException`; `status` updated; `onError` stream emits | Show "Turn on Bluetooth" CTA, keep retry button visible |
-| Permission denied / missing BLE permission | Scan/connect fails with platform error mentioning permission/unauthorized | Emits `scan_failed` or `connect_failed` (typed mapping can be extended), `onError` emits | Prompt permission flow, then re-trigger scan |
-| Android GATT 133 | connect failure with `gatt_error` / `133` | Retries based on `PrinterRetryPolicy` (`retryGatt133Only`), then fails with mapped connect error | Show "Retry connect" + "Move closer to printer" hint |
-| No writable characteristic | Services discovered but write characteristic absent | Emits `NoWritableCharacteristicException` | Show "Unsupported printer profile" message |
+| Bluetooth is off | platform reports Bluetooth disabled | Emits `BluetoothOffException`; `status` updated; `onError` stream emits | Show "Turn on Bluetooth" CTA, keep retry button visible |
+| Permission denied / missing Bluetooth permission | scan/connect fails with permission/unauthorized platform error | Emits `scan_failed` or `connect_failed`, `onError` emits | Prompt permission flow, then re-trigger scan |
+| Connect failure | printer offline/out of range/wrong pairing | Emits `connect_failed`; state transitions to `error` | Show "Retry connect" + "Check pairing" hint |
+| Not connected at print time | user prints before connecting | Emits `NoWritableCharacteristicException` for backward compatibility | Show "Connect printer first" message |
 | Saved printer not available | auto reconnect timeout / not found | Falls back to manual connect state, status set to manual connect hint | Show device list + "Connect manually" |
 | Print image conversion failure | invalid bytes, decode failure | Emits `print_failed`, `onError` emits, progress emits `failed` | Show "Invalid print image" and allow retry |
-| Disconnect during operation | connection state becomes disconnected | Emits disconnected state on `onStateChanged`; status updated | Show reconnect button and preserve pending print context if needed |
+| Disconnect during operation | connection drops while printing | Emits disconnected state on `onStateChanged`; status updated | Show reconnect button and preserve pending print context if needed |
 
 ## Recovery Design Rules
 
@@ -30,8 +30,7 @@ This document defines expected failure handling for common BLE printer issues.
 
 ## Operational Recommendations
 
-- Keep `retryGatt133Only = true` in production unless vendor-specific testing suggests otherwise.
-- For unstable radio environments:
+- For unstable environments:
   - increase `maxRetries`
   - increase `baseDelayMs`
   - keep `maxDelayMs` bounded
