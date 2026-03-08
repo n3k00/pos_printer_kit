@@ -8,10 +8,11 @@ environment:
   flutter: ">=1.17.0"
 
 dependencies:
+  esc_pos_utils_plus: ^2.0.4
   flutter:
     sdk: flutter
-  flutter_blue_plus: ^2.2.1
   image: ^4.5.4
+  print_bluetooth_thermal: ^1.1.9
   shared_preferences: ^2.5.3
 
 dev_dependencies:

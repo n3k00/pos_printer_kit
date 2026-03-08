@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../core/printer_core.dart';
 import '../l10n/printer_ui_strings.dart';
@@ -62,7 +61,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
         final isConnected = c.hasConnectedPrinter;
         final isConnecting = c.busy;
         final isScanning = c.isScanning;
-        final adapterOn = c.adapterState == BluetoothAdapterState.on;
+        final adapterOn = c.isBluetoothOn;
 
         final showResultsMode =
             !isConnected && !isConnecting && !isScanning && _hasCompletedSearch;
@@ -230,21 +229,20 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                                         ),
                                     itemBuilder: (context, index) {
                                       final r = c.results[index];
-                                      final d = r.device;
                                       return ListTile(
                                         contentPadding:
                                             const EdgeInsets.symmetric(vertical: 6),
                                         onTap: c.busy ? null : () => c.connect(r),
                                         leading: Icon(Icons.bluetooth, color: blue),
                                         title: Text(
-                                          c.displayName(d),
+                                          c.displayName(r),
                                           style: TextStyle(
                                             color: textPrimary,
                                             fontSize: 20,
                                           ),
                                         ),
                                         subtitle: Text(
-                                          d.remoteId.str,
+                                          r.id,
                                           style: TextStyle(color: textSecondary),
                                         ),
                                         trailing: Icon(
