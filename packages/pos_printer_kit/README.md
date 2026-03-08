@@ -144,6 +144,9 @@ await core.printImage(
 Transport behavior:
 - package first attempts `print_bluetooth_thermal` connection/write path
 - if that path is not available, package falls back to BLE chunk writing
+- package runs a background connection-health check while connected
+  - if printer power is turned off or link is lost, state auto-switches to disconnected
+  - status is updated to `Printer connection lost.`
 
 ## Printer Capability Profiles
 
@@ -267,6 +270,10 @@ core.onError.listen((e) {
 });
 ```
 
+Connection-drop notes:
+- if printer is powered off after connection, health-check loop detects it and emits disconnected state
+- apps should listen to `onStateChanged` and update connect indicators/buttons immediately
+
 ## Recommended Receipt Strategy
 
 For Myanmar and mixed-language receipts:
@@ -298,6 +305,7 @@ These are practical improvements recommended for production apps:
 - optional `printRasterBytes(...)` API to bypass repeated image encoding
 - profile-level width calibration table per known model (e.g., safe 80mm width by model)
 - richer examples for 80mm receipt and 80mm label sticker flows
+- optional configurable health-check interval for very low-power scenarios
 
 ## Development Rules (For Humans + AI Agents)
 
