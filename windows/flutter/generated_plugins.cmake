@@ -3,7 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  flutter_blue_plus_winrt
+  print_bluetooth_thermal
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
