@@ -146,6 +146,7 @@ Transport behavior:
 - if that path is not available, package falls back to BLE chunk writing
 - package does not poll `connectionStatus` in auto loops
 - disconnect is detected from real operation failures (connect/write), then state switches to disconnected
+- this repo uses a vendored patch of `print_bluetooth_thermal` to remove forced leading newline before raw byte print
 
 ## Printer Capability Profiles
 

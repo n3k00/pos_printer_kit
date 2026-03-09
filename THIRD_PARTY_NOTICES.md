@@ -7,6 +7,8 @@ to those components separately from this repository's LICENSE.
 
 - Package: `print_bluetooth_thermal`
 - Source: https://pub.dev/packages/print_bluetooth_thermal
+- Note: this repository vendors a patched local copy under
+  `vendor/print_bluetooth_thermal` to avoid unwanted leading newline writes.
 
 ## esc_pos_utils_plus
 
