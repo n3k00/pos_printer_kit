@@ -24,7 +24,6 @@ class PrinterCore extends ChangeNotifier {
   static const String _savedPrinterIdKey = 'pos_printer_kit.last_printer_id';
   static const String _savedPrinterNameKey = 'pos_printer_kit.last_printer_name';
   static Future<CapabilityProfile>? _escCapabilityProfileFuture;
-  static const Duration _connectionHealthInterval = Duration(seconds: 2);
 
   List<PrinterDevice> results = [];
   PrinterDevice? connectedDevice;
@@ -32,7 +31,6 @@ class PrinterCore extends ChangeNotifier {
   bool isScanning = false;
   bool busy = false;
   bool _isConnected = false;
-  Timer? _connectionHealthTimer;
   String status = 'Ready';
   Duration scanTimeout = const Duration(seconds: 8);
   PrinterOperationException? lastError;
@@ -187,7 +185,6 @@ class PrinterCore extends ChangeNotifier {
 
       _isConnected = true;
       connectedDevice = device;
-      _startConnectionHealthMonitor();
       connectionState = PrinterConnectionMachine.transition(
         connectionState,
         PrinterConnectionEvent.connected,
@@ -214,7 +211,6 @@ class PrinterCore extends ChangeNotifier {
 
   Future<void> disconnect() async {
     try {
-      _stopConnectionHealthMonitor();
       final ok = await PrintBluetoothThermal.disconnect;
       if (!ok) {
         _setStatus('Disconnect may not have completed.');
@@ -319,7 +315,6 @@ class PrinterCore extends ChangeNotifier {
     Uint8List imageBytes, {
     PrinterPrintConfig config = const PrinterPrintConfig(),
   }) async {
-    await _refreshConnectionHealth();
     if (!hasConnectedPrinter) {
       _setError(const NoWritableCharacteristicException());
       return false;
@@ -341,6 +336,7 @@ class PrinterCore extends ChangeNotifier {
       for (var i = 0; i < copyCount; i++) {
         final ok = await PrintBluetoothThermal.writeBytes(escPosBytes);
         if (!ok) {
+          _handleRemoteDisconnect();
           throw PrinterOperationException(
             code: 'thermal_write_failed',
             message: 'Failed to send data to printer.',
@@ -384,36 +380,10 @@ class PrinterCore extends ChangeNotifier {
     }
   }
 
-  void _startConnectionHealthMonitor() {
-    _stopConnectionHealthMonitor();
-    _connectionHealthTimer = Timer.periodic(
-      _connectionHealthInterval,
-      (_) => _refreshConnectionHealth(),
-    );
-  }
-
-  void _stopConnectionHealthMonitor() {
-    _connectionHealthTimer?.cancel();
-    _connectionHealthTimer = null;
-  }
-
-  Future<void> _refreshConnectionHealth() async {
-    if (!_isConnected) return;
-    try {
-      final connected = await PrintBluetoothThermal.connectionStatus;
-      if (!connected) {
-        _handleRemoteDisconnect();
-      }
-    } catch (_) {
-      _handleRemoteDisconnect();
-    }
-  }
-
   void _handleRemoteDisconnect() {
     if (!_isConnected) return;
     _isConnected = false;
     connectedDevice = null;
-    _stopConnectionHealthMonitor();
     connectionState = PrinterConnectionMachine.transition(
       connectionState,
       PrinterConnectionEvent.disconnected,
@@ -538,7 +508,6 @@ class PrinterCore extends ChangeNotifier {
 
   @override
   void dispose() {
-    _stopConnectionHealthMonitor();
     _stateController.close();
     _printProgressController.close();
     _errorController.close();
