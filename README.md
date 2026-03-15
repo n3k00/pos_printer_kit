@@ -3,13 +3,13 @@
 Reusable Flutter package for POS thermal printing.
 
 This package is designed for:
-- app developers who need BLE printer connect + print quickly
+- app developers who need Bluetooth thermal printer connect + print quickly
 - maintainers who need clear extension points
 - AI/code agents that need reliable project context to patch safely
 
 ## What This Package Does
 
-- BLE printer discovery/connect/disconnect
+- Bluetooth thermal printer discovery/connect/disconnect
 - reusable connect page UI (`PrinterConnectPage`)
 - image-only ESC/POS raster printing (recommended for Myanmar-safe output)
 - print configuration controls (`PrinterPrintConfig`)
@@ -21,7 +21,7 @@ This package is designed for:
 
 - guaranteed vendor-specific command compatibility across all printer models
 - raw text-mode Unicode printing reliability (use image pipeline)
-- universal dual-transport discovery UX (current connect UI remains BLE-first)
+- universal dual-transport discovery UX across every printer transport
 
 ## Package Layout
 
@@ -138,12 +138,12 @@ await core.printImage(
 - `cutMode` (`none`, `full`, `partial`)
 - `allowCutCommands`
 - `chunkDelayMs` (default `12`, lower is faster but may reduce stability)
-- `maxChunkSize` (default `180`, upper bound for each BLE write chunk)
+- `maxChunkSize` (default `180`, upper bound for each raw write chunk)
 - `preferWriteWithoutResponse` (can improve speed on some printers)
 
 Transport behavior:
 - package first attempts `print_bluetooth_thermal` connection/write path
-- if that path is not available, package falls back to BLE chunk writing
+- if that path is not available, package falls back to direct raw chunk writing
 - package does not poll `connectionStatus` in auto loops
 - disconnect is detected from real operation failures (connect/write), then state switches to disconnected
 - this repo uses a vendored patch of `print_bluetooth_thermal` to remove forced leading newline before raw byte print
@@ -153,7 +153,7 @@ Transport behavior:
 Built-in profiles:
 - `PrinterCapabilityProfile.receipt58` (384px, cutter usually not available)
 - `PrinterCapabilityProfile.receipt80` (576px, cutter usually available)
-- `PrinterCapabilityProfile.xpP323b` (portable BLE profile)
+- `PrinterCapabilityProfile.xpP323b` (portable Bluetooth thermal profile)
 
 Use profile-based config:
 
@@ -283,7 +283,7 @@ For Myanmar and mixed-language receipts:
 
 ## Host App Calibration Boundary
 
-This package handles BLE transport, connection lifecycle, and print pipeline.
+This package handles Bluetooth printer transport, connection lifecycle, and print pipeline.
 Final receipt layout calibration is intentionally host-app responsibility.
 
 Host app should tune:
@@ -313,7 +313,7 @@ These are practical improvements recommended for production apps:
 - Do not remove exported symbols without changelog note.
 - Add/adjust tests for behavior changes.
 - Prefer configurable defaults instead of hardcoded magic values.
-- Keep BLE logic in `core`, UI logic in `ui`, encoding logic in `image_print`.
+- Keep transport logic in `core`, UI logic in `ui`, encoding logic in `image_print`.
 
 ## Test Commands
 
