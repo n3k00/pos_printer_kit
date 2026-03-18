@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/printer_core.dart';
+import '../core/printer_connection_state.dart';
 import '../l10n/printer_ui_strings.dart';
 
 class PrinterConnectPage extends StatefulWidget {
@@ -59,8 +60,11 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
       animation: c,
       builder: (context, _) {
         final isConnected = c.hasConnectedPrinter;
-        final isConnecting = c.busy;
-        final isScanning = c.isScanning;
+        final stage = c.connectionState.stage;
+        final isConnecting = stage == PrinterConnectionStage.connecting;
+        final isScanning =
+            c.isScanning || stage == PrinterConnectionStage.searching;
+        final actionBusy = c.busy && !isScanning && !isConnecting;
         final adapterOn = c.isBluetoothOn;
 
         final showResultsMode =
@@ -82,19 +86,19 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
 
         final title = isConnected
             ? s.connectedTitle
-            : (isConnecting
-                ? s.connectingTitle
-                : (isScanning
-                    ? s.searchingPrintersTitle
+            : (isScanning
+                ? s.searchingPrintersTitle
+                : (isConnecting
+                    ? s.connectingTitle
                     : (showResultsMode
                         ? s.selectPrinterTitle
                         : s.readyToSearchTitle)));
         final subtitle = isConnected
             ? s.connectedSubtitle
-            : (isConnecting
-                ? s.connectingSubtitle
-                : (isScanning
-                    ? s.searchingSubtitle
+            : (isScanning
+                ? s.searchingSubtitle
+                : (isConnecting
+                    ? s.connectingSubtitle
                     : (showResultsMode
                         ? s.selectPrinterSubtitle
                         : s.readyToSearchSubtitle)));
@@ -264,7 +268,7 @@ class _PrinterConnectPageState extends State<PrinterConnectPage>
                     isConnected: isConnected,
                     isScanning: isScanning,
                     adapterOn: adapterOn,
-                    busy: c.busy,
+                    busy: actionBusy,
                     onStart: c.startScan,
                     onStop: c.stopScan,
                     onDisconnect: c.disconnect,
