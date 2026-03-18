@@ -21,6 +21,15 @@ class BluetoothOffException extends PrinterOperationException {
         );
 }
 
+class BluetoothPermissionDeniedException extends PrinterOperationException {
+  const BluetoothPermissionDeniedException({super.cause})
+      : super(
+          code: 'bluetooth_permission_denied',
+          message:
+              'Bluetooth permission is denied. Allow Nearby Devices and try again.',
+        );
+}
+
 class NoWritableCharacteristicException extends PrinterOperationException {
   const NoWritableCharacteristicException({super.cause})
       : super(

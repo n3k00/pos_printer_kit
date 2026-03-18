@@ -9,7 +9,7 @@ This package is designed for:
 
 ## What This Package Does
 
-- Bluetooth thermal printer discovery/connect/disconnect
+- nearby Bluetooth printer discovery/connect/disconnect
 - reusable connect page UI (`PrinterConnectPage`)
 - image-only ESC/POS raster printing (recommended for Myanmar-safe output)
 - print configuration controls (`PrinterPrintConfig`)
@@ -147,6 +147,8 @@ Transport behavior:
 - package does not poll `connectionStatus` in auto loops
 - disconnect is detected from real operation failures (connect/write), then state switches to disconnected
 - this repo uses a vendored patch of `print_bluetooth_thermal` to remove forced leading newline before raw byte print
+- Android discovery now performs nearby Bluetooth discovery and also merges bonded printer devices into results
+- Android 12+ flow requests Nearby Devices permission before scan/connect
 
 ## Printer Capability Profiles
 
@@ -215,8 +217,17 @@ Typed errors are exposed via `PrinterCore.lastError`.
 
 Examples:
 - `BluetoothOffException`
+- `BluetoothPermissionDeniedException`
 - `NoWritableCharacteristicException`
 - `ConnectTimeoutException`
+
+## Discovery Notes
+
+- current nearby discovery is Android-focused and uses Bluetooth Classic discovery because the print transport is RFCOMM/SPP-based
+- results are not paired-only; nearby discovered devices are included
+- bonded printer devices are merged into results so known printers can still appear when they are not actively discoverable
+- non-printer devices are filtered out using Bluetooth class/name heuristics
+- some printers only appear while powered on and discoverable
 
 ## Retry / Backoff Policy
 

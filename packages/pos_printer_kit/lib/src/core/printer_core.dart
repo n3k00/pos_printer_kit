@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -28,6 +30,7 @@ class PrinterCore extends ChangeNotifier {
   List<PrinterDevice> results = [];
   PrinterDevice? connectedDevice;
   bool isBluetoothOn = false;
+  bool isBluetoothPermissionGranted = true;
   bool isScanning = false;
   bool busy = false;
   bool _isConnected = false;
@@ -58,6 +61,7 @@ class PrinterCore extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _loadSavedPrinterMeta();
+    await _ensureBluetoothPermission();
     await _refreshBluetoothState();
     if (autoReconnectEnabled && lastConnectedPrinterId != null) {
       await reconnectSavedPrinter();
@@ -66,8 +70,54 @@ class PrinterCore extends ChangeNotifier {
     }
   }
 
+  Future<void> _refreshBluetoothPermissionState() async {
+    try {
+      isBluetoothPermissionGranted =
+          await PrintBluetoothThermal.isPermissionBluetoothGranted;
+    } catch (e) {
+      isBluetoothPermissionGranted = false;
+      _log('Bluetooth permission check failed: $e');
+    }
+  }
+
+  Future<bool> _ensureBluetoothPermission() async {
+    if (!Platform.isAndroid) {
+      await _refreshBluetoothPermissionState();
+      return isBluetoothPermissionGranted;
+    }
+
+    try {
+      final statuses = await <Permission>[
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+      ].request();
+      final scanGranted =
+          statuses[Permission.bluetoothScan]?.isGranted ?? false;
+      final connectGranted =
+          statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+      isBluetoothPermissionGranted = scanGranted && connectGranted;
+      if (!isBluetoothPermissionGranted) {
+        _log(
+          'Bluetooth permission request denied: '
+          'scan=$scanGranted connect=$connectGranted',
+        );
+      }
+      return isBluetoothPermissionGranted;
+    } catch (e) {
+      _log('Bluetooth permission request failed: $e');
+      await _refreshBluetoothPermissionState();
+      return isBluetoothPermissionGranted;
+    }
+  }
+
   Future<void> _refreshBluetoothState() async {
     try {
+      await _refreshBluetoothPermissionState();
+      if (!isBluetoothPermissionGranted) {
+        isBluetoothOn = false;
+        _setStatus('Bluetooth permission is denied.');
+        return;
+      }
       isBluetoothOn = await PrintBluetoothThermal.bluetoothEnabled;
       if (isBluetoothOn) {
         _setStatus('Bluetooth ready.');
@@ -89,7 +139,12 @@ class PrinterCore extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final permissionGranted = await _ensureBluetoothPermission();
       await _refreshBluetoothState();
+      if (!permissionGranted || !isBluetoothPermissionGranted) {
+        _setError(const BluetoothPermissionDeniedException());
+        return;
+      }
       if (!isBluetoothOn) {
         _setError(const BluetoothOffException());
         return;
@@ -100,10 +155,12 @@ class PrinterCore extends ChangeNotifier {
         PrinterConnectionEvent.startSearching,
       );
       _emitStateChange();
-      _setStatus('Loading paired Bluetooth printers...');
+      _setStatus('Searching nearby Bluetooth printers...');
 
-      final paired = await PrintBluetoothThermal.pairedBluetooths;
-      results = paired
+      final discovered = await PrintBluetoothThermal.discoverBluetooths(
+        timeout: scanTimeout,
+      );
+      results = discovered
           .map(
             (e) => PrinterDevice(
               id: e.macAdress.trim(),
@@ -121,14 +178,14 @@ class PrinterCore extends ChangeNotifier {
       _emitStateChange();
       _setStatus(
         results.isEmpty
-            ? 'No paired Bluetooth printer found.'
-            : 'Found ${results.length} paired printer(s).',
+            ? 'No Bluetooth printer found.'
+            : 'Found ${results.length} printer(s).',
       );
     } catch (e) {
       _setError(
         PrinterOperationException(
           code: 'scan_failed',
-          message: 'Could not load paired Bluetooth printers.',
+          message: 'Could not discover nearby Bluetooth printers.',
           cause: e,
         ),
       );
@@ -161,6 +218,11 @@ class PrinterCore extends ChangeNotifier {
 
     try {
       await stopScan();
+      final permissionGranted = await _ensureBluetoothPermission();
+      if (!permissionGranted || !isBluetoothPermissionGranted) {
+        _setError(const BluetoothPermissionDeniedException());
+        return;
+      }
       connectionState = PrinterConnectionMachine.transition(
         connectionState,
         PrinterConnectionEvent.startConnecting,

@@ -66,6 +66,34 @@ class PrintBluetoothThermal {
     return items;
   }
 
+  ///Android: Discover nearby bluetooth devices during the provided timeout.
+  static Future<List<BluetoothInfo>> discoverBluetooths({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    List<BluetoothInfo> items = [];
+    if (Platform.isWindows) {
+      return items;
+    } else if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      try {
+        final List result = await _channel.invokeMethod(
+          'discoverbluetooths',
+          <String, dynamic>{'timeoutMs': timeout.inMilliseconds},
+        );
+        for (String item in result) {
+          final info = item.split("#");
+          if (info.length < 2) continue;
+          final name = info[0];
+          final mac = info[1];
+          items.add(BluetoothInfo(name: name, macAdress: mac));
+        }
+      } on PlatformException catch (e) {
+        if (kDebugMode) print("Fail discoverBluetooths: '${e.message}'.");
+      }
+    }
+
+    return items;
+  }
+
   //returns true if you are currently connected to the printer
   static Future<bool> get connectionStatus async {
     //estado de la conexion eon el bluetooth

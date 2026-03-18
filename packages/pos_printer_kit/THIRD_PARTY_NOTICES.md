@@ -15,6 +15,11 @@ to those components separately from this repository's LICENSE.
 - Package: `esc_pos_utils_plus`
 - Source: https://pub.dev/packages/esc_pos_utils_plus
 
+## permission_handler
+
+- Package: `permission_handler`
+- Source: https://pub.dev/packages/permission_handler
+
 Action required before release:
 - Verify the current LICENSE for each dependency in your lockfile.
 - Keep a copy of the exact dependency versions and associated license texts
