@@ -11,3 +11,10 @@
   - raster conversion unit tests
   - connection state transition tests
 - Added compliance docs: proprietary `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+
+## Unreleased
+
+- Switched discovery from bonded-only listing to nearby Bluetooth discovery with bonded printer merge on Android.
+- Added Android 12+ Nearby Devices permission request flow before scan/connect.
+- Added `BluetoothPermissionDeniedException` for explicit permission failure handling.
+- Patched vendored `print_bluetooth_thermal` plugin to stabilize repeated discovery runs.

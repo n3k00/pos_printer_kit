@@ -6,5 +6,6 @@ void main() {
   test('exports package symbols', () {
     final strings = PrinterUiStrings.forLanguageCode('en');
     expect(strings.readyToSearchTitle, isNotEmpty);
+    expect(const BluetoothPermissionDeniedException().code, 'bluetooth_permission_denied');
   });
 }

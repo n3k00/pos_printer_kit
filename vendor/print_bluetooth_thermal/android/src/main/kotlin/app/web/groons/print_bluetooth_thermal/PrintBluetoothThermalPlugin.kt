@@ -2,7 +2,9 @@ package app.web.groons.print_bluetooth_thermal
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -10,6 +12,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -39,6 +43,11 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
   private lateinit var mContext: Context
   private lateinit var channel : MethodChannel
   private var state:Boolean = false
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var discoveryResult: Result? = null
+  private var discoveryReceiver: BroadcastReceiver? = null
+  private val discoveredDevices: LinkedHashMap<String, String> = linkedMapOf()
+  private var discoveryActive: Boolean = false
 
   //val pluginActivity: Activity = activity
   //private val application: Application = activity.application
@@ -56,11 +65,11 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
     var sdkversion:Int = Build.VERSION.SDK_INT;
     var androidVersion:String = android.os.Build.VERSION.RELEASE;
     activeResult = result
-    permissionGranted = ContextCompat.checkSelfPermission(mContext,Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    permissionGranted = hasBluetoothConnectPermission(sdkversion)
     if(call.method == "ispermissionbluetoothgranted"){
       var permission: Boolean = true;
       if(sdkversion >= 31){
-        permission = permissionGranted;
+        permission = hasBluetoothConnectPermission(sdkversion) && hasBluetoothScanPermission(sdkversion);
       }
       //solicitar el permiso si no esta consedido
       if(!permission){
@@ -82,6 +91,22 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
       result.success(permission)
     }else if ( !permissionGranted && sdkversion >= 31) {
       Log.i("warning","permission bluetooth granted is false, check in settings that the permission of nearby devices is activated")
+      when (call.method) {
+        "bluetoothenabled",
+        "connectionstatus",
+        "connect",
+        "writebytes",
+        "writebytesChinese",
+        "printstring",
+        "disconnect" -> result.success(false)
+        "pairedbluetooths" -> result.success(listOf<String>())
+        "discoverbluetooths" -> result.success(listOf<String>())
+        else -> result.error(
+          "PERMISSION_DENIED",
+          "Bluetooth permission denied. Enable Nearby Devices permission.",
+          null
+        )
+      }
       return;
     }else if (call.method == "getPlatformVersion") {
       result.success("Android $androidVersion")
@@ -99,6 +124,9 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
         state = true
       }
       result.success(state)
+    }else if (call.method == "discoverbluetooths") {
+      val timeoutMs = (call.argument<Int>("timeoutMs") ?: 8000).toLong()
+      discoverBluetooths(result, timeoutMs)
     }else if (call.method == "connectionstatus") {
       if(outputStream != null) {
         try{
@@ -256,6 +284,146 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
     }
   }
 
+  private fun hasBluetoothConnectPermission(sdkversion: Int): Boolean {
+    return sdkversion < 31 ||
+      ContextCompat.checkSelfPermission(
+        mContext,
+        Manifest.permission.BLUETOOTH_CONNECT
+      ) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun hasBluetoothScanPermission(sdkversion: Int): Boolean {
+    return sdkversion < 31 ||
+      ContextCompat.checkSelfPermission(
+        mContext,
+        Manifest.permission.BLUETOOTH_SCAN
+      ) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun discoverBluetooths(result: Result, timeoutMs: Long) {
+    val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+    if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+      result.success(listOf<String>())
+      return
+    }
+
+    val sdkversion: Int = Build.VERSION.SDK_INT
+    if (!hasBluetoothScanPermission(sdkversion) || !hasBluetoothConnectPermission(sdkversion)) {
+      result.success(listOf<String>())
+      return
+    }
+
+    finishDiscovery()
+    discoveredDevices.clear()
+    discoveryResult = result
+    discoveryActive = false
+
+    discoveryReceiver = object : BroadcastReceiver() {
+      override fun onReceive(context: Context?, intent: Intent?) {
+        when (intent?.action) {
+          BluetoothDevice.ACTION_FOUND -> {
+            val device: BluetoothDevice? =
+              intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            if (device != null) {
+              addDiscoveredDevice(device)
+            }
+          }
+          BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+            if (discoveryActive) {
+              finishDiscovery()
+            }
+          }
+        }
+      }
+    }
+
+    val filter = IntentFilter().apply {
+      addAction(BluetoothDevice.ACTION_FOUND)
+      addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+    }
+    mContext.registerReceiver(discoveryReceiver, filter)
+
+    try {
+      if (bluetoothAdapter.isDiscovering) {
+        bluetoothAdapter.cancelDiscovery()
+        mainHandler.postDelayed({
+          beginDiscovery(bluetoothAdapter, timeoutMs)
+        }, 400)
+        return
+      }
+      beginDiscovery(bluetoothAdapter, timeoutMs)
+    } catch (e: Exception) {
+      Log.e(TAG, "discoverBluetooths failed: ${e.message}", e)
+      finishDiscovery()
+      return
+    }
+  }
+
+  private fun beginDiscovery(bluetoothAdapter: BluetoothAdapter, timeoutMs: Long) {
+    try {
+      val started = bluetoothAdapter.startDiscovery()
+      if (!started) {
+        finishDiscovery()
+        return
+      }
+      discoveryActive = true
+      // Merge already bonded devices so known printers remain selectable even
+      // when they are not currently discoverable.
+      bluetoothAdapter.bondedDevices?.forEach { device ->
+        addDiscoveredDevice(device)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "beginDiscovery failed: ${e.message}", e)
+      finishDiscovery()
+      return
+    }
+
+    mainHandler.postDelayed({
+      finishDiscovery()
+    }, timeoutMs)
+  }
+
+  private fun addDiscoveredDevice(device: BluetoothDevice) {
+    val address = device.address ?: return
+    val name = device.name?.trim().orEmpty()
+    val btClass = device.bluetoothClass?.majorDeviceClass
+    val isLikelyPrinter = btClass == BluetoothClass.Device.Major.IMAGING ||
+      name.contains("printer", ignoreCase = true) ||
+      name.contains("pos", ignoreCase = true) ||
+      name.contains("xp-", ignoreCase = true) ||
+      name.contains("mpt", ignoreCase = true)
+
+    if (!isLikelyPrinter) {
+      return
+    }
+
+    discoveredDevices[address] = "${name}#${address}"
+  }
+
+  private fun finishDiscovery() {
+    val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+    try {
+      if (bluetoothAdapter?.isDiscovering == true) {
+        bluetoothAdapter.cancelDiscovery()
+      }
+    } catch (_: Exception) {
+    }
+
+    mainHandler.removeCallbacksAndMessages(null)
+    discoveryActive = false
+
+    discoveryReceiver?.let {
+      try {
+        mContext.unregisterReceiver(it)
+      } catch (_: Exception) {
+      }
+    }
+    discoveryReceiver = null
+
+    discoveryResult?.success(discoveredDevices.values.toList())
+    discoveryResult = null
+  }
+
 
   private fun getBatteryLevel(): Int {
     val batteryLevel: Int
@@ -409,6 +577,7 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
 
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+    finishDiscovery()
     channel.setMethodCallHandler(null)
   }
 }

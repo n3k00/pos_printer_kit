@@ -12,6 +12,7 @@ dependencies:
   flutter:
     sdk: flutter
   image: ^4.5.4
+  permission_handler: ^11.4.0
   print_bluetooth_thermal:
     path: vendor/print_bluetooth_thermal
   shared_preferences: ^2.5.3
