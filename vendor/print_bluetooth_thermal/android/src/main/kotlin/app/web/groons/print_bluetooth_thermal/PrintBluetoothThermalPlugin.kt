@@ -171,35 +171,38 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
       }
     }else if (call.method == "writebytes") {
       val lista: List<Int> = call.arguments as List<Int>
-    var bytes: ByteArray = ByteArray(0)
+      val bytes = ByteArray(lista.size) { index -> lista[index].toByte() }
 
-    lista.forEach {
-        bytes += it.toByte()
-    }
-
-    if (outputStream != null) {
-        try {
+      if (outputStream != null) {
+        GlobalScope.launch(Dispatchers.IO) {
+          try {
             val chunkSize = 16 * 1024 // 16 KB
             val total = bytes.size
             var offset = 0
 
             outputStream?.run {
-                while (offset < total) {
-                    val end = minOf(offset + chunkSize, total)
-                    write(bytes, offset, end - offset)
-                    flush()
-                    offset = end
-                }
-                result.success(true)
+              while (offset < total) {
+                val end = minOf(offset + chunkSize, total)
+                write(bytes, offset, end - offset)
+                flush()
+                offset = end
+              }
             }
-        } catch (e: Exception) {
-            result.success(false)
+
+            withContext(Dispatchers.Main) {
+              result.success(true)
+            }
+          } catch (e: Exception) {
             outputStream = null
             Log.e(TAG, "Error al imprimir: ${e.message}", e)
+            withContext(Dispatchers.Main) {
+              result.success(false)
+            }
+          }
         }
-    } else {
+      } else {
         result.success(false)
-    }
+      }
     }else if (call.method == "printstring") {
       var stringllego: String = call.arguments.toString()
       //var lista = stringllego.split("*")
@@ -241,28 +244,31 @@ class PrintBluetoothThermalPlugin: FlutterPlugin, MethodCallHandler {
         result.success("false")
       }
     }else if (call.method == "writebytesChinese") {
-      var lista: List<Int> = call.arguments as List<Int>
-      var bytes: ByteArray = ByteArray(0)
-
-      lista.forEach {
-        bytes += it.toByte() //Log.d(TAG, "foreah: ${it}")
-      }
+      val lista: List<Int> = call.arguments as List<Int>
+      val bytes = ByteArray(lista.size) { index -> lista[index].toByte() }
       if(outputStream != null) {
-        try{
-          outputStream?.run {
-            write(bytes)
-            result.success(true)
+        GlobalScope.launch(Dispatchers.IO) {
+          try{
+            outputStream?.run {
+              write(bytes)
+              flush()
+            }
+            withContext(Dispatchers.Main) {
+              result.success(true)
+            }
+          }catch (e: Exception){
+            outputStream = null
+            withContext(Dispatchers.Main) {
+              result.success(false)
+            }
+            //mensajeToast("Dispositivo fue desconectado, reconecte")
+            // Log.d(TAG, "state print: ${e.message}")
+            /*var ex:String = e.message.toString()
+            if(ex=="Broken pipe"){
+              Log.d(TAG, "Dispositivo fue desconectado reconecte: ")
+              mensajeToast("Dispositivo fue desconectado, reconecte")
+            }*/
           }
-        }catch (e: Exception){
-          result.success(false)
-          outputStream = null
-          //mensajeToast("Dispositivo fue desconectado, reconecte")
-          // Log.d(TAG, "state print: ${e.message}")
-          /*var ex:String = e.message.toString()
-          if(ex=="Broken pipe"){
-            Log.d(TAG, "Dispositivo fue desconectado reconecte: ")
-            mensajeToast("Dispositivo fue desconectado, reconecte")
-          }*/
         }
       }else{
         result.success(false)
