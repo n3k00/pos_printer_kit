@@ -199,6 +199,9 @@ Why this helps for labels:
 - `allowCutCommands = false` by default
 - avoids unnecessary paper feed/cut for sticker stock
 
+Long-term label design reference:
+- see `docs/label_print_architecture.md`
+
 ## Localization
 
 Connect page supports:
