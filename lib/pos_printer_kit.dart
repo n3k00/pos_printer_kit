@@ -10,3 +10,6 @@ export 'src/ui/connect_page.dart';
 export 'src/image_print/image_print_job.dart';
 export 'src/image_print/esc_pos_raster_encoder.dart';
 export 'src/l10n/printer_ui_strings.dart';
+export 'src/label/label_models.dart';
+export 'src/label/label_presets.dart';
+export 'src/label/label_printer_driver.dart';

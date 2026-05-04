@@ -9,6 +9,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../label/label_models.dart';
+import '../label/label_printer_driver.dart';
+import '../label/raw_tspl_label_printer_driver.dart';
 import 'printer_connection_state.dart';
 import 'printer_device.dart';
 import 'printer_errors.dart';
@@ -21,10 +24,12 @@ class PrinterCore extends ChangeNotifier {
     this.autoReconnectEnabled = true,
     this.logCallback,
     this.connectRetryPolicy = const PrinterRetryPolicy(),
+    this.labelPrinterDriver = const RawTsplLabelPrinterDriver(),
   });
 
   static const String _savedPrinterIdKey = 'pos_printer_kit.last_printer_id';
-  static const String _savedPrinterNameKey = 'pos_printer_kit.last_printer_name';
+  static const String _savedPrinterNameKey =
+      'pos_printer_kit.last_printer_name';
   static Future<CapabilityProfile>? _escCapabilityProfileFuture;
 
   List<PrinterDevice> results = [];
@@ -40,6 +45,7 @@ class PrinterCore extends ChangeNotifier {
   final bool autoReconnectEnabled;
   final PrinterLogCallback? logCallback;
   final PrinterRetryPolicy connectRetryPolicy;
+  final LabelPrinterDriver labelPrinterDriver;
   String? lastConnectedPrinterId;
   String? lastConnectedPrinterName;
   PrinterConnectionState connectionState = const PrinterConnectionState(
@@ -170,7 +176,9 @@ class PrinterCore extends ChangeNotifier {
           .where((e) => e.id.isNotEmpty)
           .toList();
 
-      results.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      results.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
       connectionState = PrinterConnectionMachine.transition(
         connectionState,
         PrinterConnectionEvent.stopSearching,
@@ -386,14 +394,15 @@ class PrinterCore extends ChangeNotifier {
     busy = true;
     notifyListeners();
     _emitPrintProgress(
-      const PrinterPrintProgress(
-        stage: PrinterPrintProgressStage.started,
-      ),
+      const PrinterPrintProgress(stage: PrinterPrintProgressStage.started),
     );
 
     try {
       clearError(notify: false);
-      final escPosBytes = await _buildEscPosImageBytes(imageBytes, config: config);
+      final escPosBytes = await _buildEscPosImageBytes(
+        imageBytes,
+        config: config,
+      );
       final copyCount = config.copies < 1 ? 1 : config.copies;
       for (var i = 0; i < copyCount; i++) {
         final ok = await PrintBluetoothThermal.writeBytes(escPosBytes);
@@ -412,7 +421,9 @@ class PrinterCore extends ChangeNotifier {
           ),
         );
       }
-      _setStatus('Image print sent (${escPosBytes.length} bytes x $copyCount).');
+      _setStatus(
+        'Image print sent (${escPosBytes.length} bytes x $copyCount).',
+      );
       _emitPrintProgress(
         PrinterPrintProgress(
           stage: PrinterPrintProgressStage.completed,
@@ -426,6 +437,115 @@ class PrinterCore extends ChangeNotifier {
         PrinterOperationException(
           code: 'print_failed',
           message: 'Image print failed.',
+          cause: e,
+        ),
+      );
+      _emitPrintProgress(
+        PrinterPrintProgress(
+          stage: PrinterPrintProgressStage.failed,
+          message: e.toString(),
+        ),
+      );
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> printTsplLabelImage(
+    Uint8List imageBytes, {
+    int widthPx = 560,
+    int heightPx = 400,
+    double labelWidthMm = 72,
+    double labelHeightMm = 50,
+    double gapMm = 0,
+    int xOffsetPx = 0,
+    int yOffsetPx = 0,
+    int copies = 1,
+    int threshold = 160,
+    bool invertBitmap = true,
+    int direction = 0,
+    bool mirror = false,
+    bool tear = false,
+    bool homeBeforePrint = false,
+    bool calibrateGapBeforePrint = false,
+    bool feedToGapAfterPrint = false,
+    double? limitFeedMm,
+  }) async {
+    final job = LabelPrintJob(
+      media: LabelMediaConfig(
+        widthMm: labelWidthMm,
+        heightMm: labelHeightMm,
+        gapMm: gapMm,
+        paperType: gapMm > 0 ? LabelPaperType.gap : LabelPaperType.continuous,
+        direction: direction == 1
+            ? LabelPrintDirection.rotated180
+            : LabelPrintDirection.normal,
+        tearMode: tear ? LabelTearMode.on : LabelTearMode.off,
+        sensorMode: gapMm > 0
+            ? LabelSensorMode.gap
+            : LabelSensorMode.continuous,
+      ),
+      layout: LabelContentLayout(
+        contentWidthPx: widthPx,
+        contentHeightPx: heightPx,
+        offsetXPx: xOffsetPx,
+        offsetYPx: yOffsetPx,
+        alignment: LabelContentAlignment.start,
+      ),
+      imageBytes: imageBytes,
+      copies: copies,
+      threshold: threshold,
+      invertBitmap: invertBitmap,
+      calibrateBeforePrint: calibrateGapBeforePrint,
+      advanceToNextGapAfterPrint: feedToGapAfterPrint,
+      homeBeforePrint: homeBeforePrint,
+      limitFeedMm: limitFeedMm,
+    );
+    return printLabel(job);
+  }
+
+  Future<bool> printLabel(LabelPrintJob job) async {
+    if (!hasConnectedPrinter) {
+      _setError(const NoWritableCharacteristicException());
+      return false;
+    }
+
+    if (busy) return false;
+    busy = true;
+    notifyListeners();
+    _emitPrintProgress(
+      const PrinterPrintProgress(stage: PrinterPrintProgressStage.started),
+    );
+
+    try {
+      clearError(notify: false);
+      final tsplBytes = await labelPrinterDriver.buildPrintJobBytes(job);
+
+      final ok = await PrintBluetoothThermal.writeBytes(tsplBytes);
+      if (!ok) {
+        _handleRemoteDisconnect();
+        throw PrinterOperationException(
+          code: 'thermal_write_failed',
+          message: 'Failed to send label data to printer.',
+        );
+      }
+
+      _setStatus('TSPL label print sent (${tsplBytes.length} bytes).');
+      _emitPrintProgress(
+        PrinterPrintProgress(
+          stage: PrinterPrintProgressStage.completed,
+          currentCopy: job.copies < 1 ? 1 : job.copies,
+          totalCopies: job.copies < 1 ? 1 : job.copies,
+        ),
+      );
+      return true;
+    } catch (e) {
+      _setError(
+        PrinterOperationException(
+          code: 'label_print_failed',
+          message: 'TSPL label print failed.',
           cause: e,
         ),
       );
