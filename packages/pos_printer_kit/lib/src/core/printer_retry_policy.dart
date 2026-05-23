@@ -6,6 +6,7 @@ class PrinterRetryPolicy {
     this.baseDelayMs = 600,
     this.backoffMultiplier = 1.0,
     this.maxDelayMs = 3000,
+    this.connectTimeout = const Duration(seconds: 8),
     this.retryGatt133Only = true,
   });
 
@@ -13,11 +14,15 @@ class PrinterRetryPolicy {
   final int baseDelayMs;
   final double backoffMultiplier;
   final int maxDelayMs;
+  final Duration connectTimeout;
   final bool retryGatt133Only;
 
   Duration delayForAttempt(int attempt) {
     final safeAttempt = max(1, attempt);
-    final factor = pow(backoffMultiplier <= 0 ? 1.0 : backoffMultiplier, safeAttempt - 1);
+    final factor = pow(
+      backoffMultiplier <= 0 ? 1.0 : backoffMultiplier,
+      safeAttempt - 1,
+    );
     final raw = (baseDelayMs * factor).round();
     final ms = raw.clamp(0, maxDelayMs);
     return Duration(milliseconds: ms);
