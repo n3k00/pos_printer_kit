@@ -19,5 +19,10 @@ void main() {
       expect(policy.delayForAttempt(2).inMilliseconds, 1000);
       expect(policy.delayForAttempt(3).inMilliseconds, 1200); // capped
     });
+
+    test('exposes bounded connect timeout', () {
+      const policy = PrinterRetryPolicy(connectTimeout: Duration(seconds: 5));
+      expect(policy.connectTimeout, const Duration(seconds: 5));
+    });
   });
 }

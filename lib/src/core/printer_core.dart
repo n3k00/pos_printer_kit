@@ -240,9 +240,7 @@ class PrinterCore extends ChangeNotifier {
       _emitStateChange();
       _setStatus('Connecting to ${device.name}...');
 
-      final ok = await PrintBluetoothThermal.connect(
-        macPrinterAddress: device.id,
-      );
+      final ok = await _connectPrinterWithRetry(device);
       if (!ok) {
         _setError(
           PrinterOperationException(
@@ -265,7 +263,15 @@ class PrinterCore extends ChangeNotifier {
       _emitStateChange();
       await _saveLastPrinter(device.id, device.name);
       _setStatus('Connected. Ready to print.');
+    } on PrinterOperationException catch (e) {
+      _isConnected = false;
+      connectedDevice = null;
+      await _disconnectQuietly();
+      _setError(e);
     } catch (e) {
+      _isConnected = false;
+      connectedDevice = null;
+      await _disconnectQuietly();
       _setError(
         PrinterOperationException(
           code: 'connect_failed',
@@ -276,6 +282,82 @@ class PrinterCore extends ChangeNotifier {
     } finally {
       busy = false;
       notifyListeners();
+    }
+  }
+
+  Future<bool> _connectPrinterWithRetry(PrinterDevice device) async {
+    final maxAttempts = connectRetryPolicy.maxRetries < 0
+        ? 1
+        : connectRetryPolicy.maxRetries + 1;
+    Object? lastCause;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        final delay = connectRetryPolicy.delayForAttempt(attempt - 1);
+        _log(
+          '[connect] retry ${attempt - 1}/'
+          '${maxAttempts - 1} after ${delay.inMilliseconds}ms',
+        );
+        await Future<void>.delayed(delay);
+        await _disconnectQuietly();
+      }
+
+      try {
+        final ok =
+            await PrintBluetoothThermal.connect(
+              macPrinterAddress: device.id,
+            ).timeout(
+              connectRetryPolicy.connectTimeout,
+              onTimeout: () => throw const ConnectTimeoutException(),
+            );
+        if (ok) {
+          final active = await PrintBluetoothThermal.connectionStatus.timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => false,
+          );
+          if (active) return true;
+          lastCause = 'Platform reported connected but status check failed.';
+        } else {
+          lastCause = 'Platform returned false.';
+        }
+      } on ConnectTimeoutException catch (e) {
+        lastCause = e;
+        if (attempt == maxAttempts) rethrow;
+      } catch (e) {
+        lastCause = e;
+      }
+
+      if (attempt == maxAttempts || !_shouldRetryConnectFailure(lastCause)) {
+        break;
+      }
+    }
+
+    throw PrinterOperationException(
+      code: 'connect_failed',
+      message: 'Could not connect to printer.',
+      cause: lastCause,
+    );
+  }
+
+  bool _shouldRetryConnectFailure(Object? cause) {
+    if (!connectRetryPolicy.retryGatt133Only) return true;
+    if (cause == null || cause is String) return true;
+    final text = cause.toString().toLowerCase();
+    return text.contains('133') ||
+        text.contains('gatt') ||
+        text.contains('timeout') ||
+        text.contains('read failed') ||
+        text.contains('socket');
+  }
+
+  Future<void> _disconnectQuietly() async {
+    try {
+      await PrintBluetoothThermal.disconnect.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      // Best-effort cleanup before the next connect attempt.
     }
   }
 
